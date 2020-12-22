@@ -1,0 +1,276 @@
+---
+title: "sta304_fianl_project"
+author: "Xiaoya Li"
+date: "14/12/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r setup, include=FALSE, message=FALSE}
+library(tidyverse)
+library(lme4)
+library(broom)
+count(data_survey, cps19_gender)
+
+# Loading in the cleaned survey Data
+data_survey <- read_csv("survey_data1.csv")
+names(data_survey)[names(data_survey) == "Bloc Qu\xe9b\xe9cois"] <- "　Bloc"
+data_census <- read_csv("gss.csv")
+filtered_data_census <- data_census %>%
+  select(age, education,province,sex) 
+filtered_data_census <- na.omit(filtered_data_census)
+
+
+#in this case, we want to see how the result change if everyone vote in the election. Thus, we do not remove people who said "unlikely to vote" and "likely to vote"
+
+
+#show the data set in graph"
+vote_choice_data <- data_survey%>%
+  filter(!is.na(data_survey$cps19_votechoice))
+
+reorder_size <- function(x) {
+  factor(x, levels = names(sort(table(x))))
+}
+ggplot(vote_choice_data, aes(reorder_size(cps19_votechoice))) + geom_bar()+coord_flip()
+ggplot(vote_choice_data, aes(reorder_size(cps19_v_likely))) + geom_bar()+coord_flip()
+ggplot(vote_choice_data, aes(reorder_size(cps19_province))) + geom_bar()+coord_flip()
+
+
+
+
+
+
+
+# as the gragh 1 shows, Liberal Party get the most votes, the numbers of vote for Conservative Party is the second. there different between Liberal Party and Conservative Party is not small. Thus, they are competitive candidates
+```
+
+```{r}
+####Map data style between survey & census####
+
+##edu##
+
+#Survey
+Less_than_highschool <- c("Some elementary school", "Completed elementary school", "No schooling")
+highschool <- c("Some secondary/ high school", "Completed secondary/ high school")
+
+
+collage <- c("Completed technical, community college, CEGEP, College Classique", "Some technical, community college, CEGEP, College Classique")
+univercity.below.bachelor <- c("Some university"	)
+univercity.above.bachelor <- c("Master's degree", "Professional degree or doctorate")
+higer.than.hs.lower.than.university.cencus <-c("College, CEGEP or other non-university certificate or di...", "Trade certificate or diploma")
+
+#census
+
+
+filtered_data_census<-filtered_data_census %>% 
+  mutate(changed_edu_census = case_when(education=="Bachelor's degree (e.g. B.A., B.Sc., LL.B.)"~"Bachelor's degree",
+                                        education=="Less than high school diploma or its equivalent"~"Less than high school diploma or its equivalent",
+                                        education=="High school diploma or a high school equivalency certificate"~"High school diploma or a high school equivalency certificate",
+                                        education=="University certificate or diploma below the bachelor's level"~"University certificate or diploma below the bachelor's level",
+                                        education=="University certificate, diploma or degree above the bach..."~"University certificate, diploma or degree above the bachelor's level",
+                                 education %in% higer.than.hs.lower.than.university.cencus~"higer.than.hs.lower.than.university.cencus"))
+    
+#Survey
+
+vote_choice_data<-vote_choice_data %>% 
+  mutate(changed_edu = case_when(cps19_education ==	"Bachelor's degree" ~"Bachelor's degree",
+                                 
+                            cps19_education %in% Less_than_highschool~"Less than high school diploma or its equivalent",
+                            cps19_education %in% highschool~"High school diploma or a high school equivalency certificate",
+                            cps19_education %in% collage~"higer.than.hs.lower.than.university.cencus",
+                            cps19_education %in% univercity.below.bachelor~"University certificate or diploma below the bachelor's level",
+                            cps19_education %in% univercity.above.bachelor ~"University certificate, diploma or degree above the bachelor's level"
+  )) 
+
+#drop educd & rename changed_edu#
+
+
+#####Create Age group in both datasets####
+
+vote_choice_data <- vote_choice_data %>% mutate(group_age = case_when(age <= 25 ~'25 or less',
+                                               age > 25 & age <= 40 ~ '26 to 40',
+                                               age > 40 & age <= 55 ~ '40 to 55',
+                                               age > 55 & age <= 70 ~ '55 to 70',
+                                               age > 70 ~ 'Above 70'))
+filtered_data_census <- filtered_data_census %>% mutate(group_age = case_when(age <= 25 ~'25 or less',
+                                               age > 25 & age <= 40 ~ '26 to 40',
+                                               age > 40 & age <= 55 ~ '40 to 55',
+                                               age > 55 & age <= 70 ~ '55 to 70',
+                                               age > 70 ~ 'Above 70'))
+
+
+#gender#
+vote_choice_data<-vote_choice_data %>% 
+  mutate(changed_gender = case_when(
+  
+                            cps19_gender =="A woman" ~ "Female",
+                            cps19_gender =="A man" ~ "Male"))
+
+
+                            
+
+
+
+```
+
+```{r}
+#Populate Data set for modeling#
+dataset_survey1 <-vote_choice_data%>% select(changed_gender, changed_edu, group_age, cps19_province,  cps19_votechoice)
+dataset_survey1 <- dataset_survey1 %>% 
+  na.omit(cps19_votechoice)
+
+#create the variable conservative & liberal
+dataset_survey1$conservative = ifelse(dataset_survey1$cps19_votechoice == "Conservative Party","1", "0")
+dataset_survey1$liberal = ifelse(dataset_survey1$cps19_votechoice == "Liberal Party","1", "0")
+dataset_census1 <-
+filtered_data_census%>% select(sex, province, changed_edu_census, group_age, education)
+
+#Create cell variable in both data sets#
+dataset_survey1$cell<-paste(dataset_survey1$changed_gender,dataset_survey1$group_age)
+dataset_census1$cell<-paste(dataset_census1$sex,dataset_census1$group_age)
+dataset_survey1$cell1<-paste(dataset_survey1$changed_gender,dataset_survey1$cps19_province)
+
+#Convert variables to factors#
+f.cols.survey<-c("group_age","changed_gender","changed_edu","cps19_province", "cps19_votechoice","cell", "conservative", "liberal" )
+dataset_survey1[f.cols.survey] <- lapply(dataset_survey1[f.cols.survey], factor) 
+f.cols.census<-c("group_age","sex","changed_edu_census","province", "education", "cell")
+dataset_census1[f.cols.census] <- lapply(dataset_census1[f.cols.census], factor) 
+count (dataset_survey1, conservative)
+
+```
+
+
+
+```{r}
+####*****Multi-level regression*****####
+library(lme4)
+library(ROCR)
+library(tidybayes)
+library(caret)
+library(pROC)
+library(tidyverse)
+library(survey)
+
+
+```
+```{r}
+
+model3_l <- glmer(conservative~(1|cps19_province)+changed_edu+group_age ,
+                     data = dataset_survey1, 
+                     family=binomial)
+summary(model3_l)
+ranef(model3_l)
+model4_l <- glmer(liberal~(1|cps19_province)+changed_edu+group_age ,
+                     data = dataset_survey1, 
+                     family=binomial)
+summary(model4_l)
+ranef(model4_l)
+p_model1_l<-predict(model1_l,type=c('response'))
+p_model2_l<-predict(model2_l,type=c('response'))
+p_model3_l<-predict(model3_l,type=c('response'))
+p_model4_l<-predict(model4_l,type=c('response'))
+
+
+
+final_model2<-ifelse(p_model1_l>=p_model2_l,"Conservative Party","Liberal Party")
+result2<-cbind(dataset_survey1,final_model2)
+
+final_model3<-ifelse(p_model3_l>=p_model4_l,"Conservative Party","Liberal Party")
+result3<-cbind(dataset_survey1,final_model3)
+
+#roc curve
+roc_modle2 <- roc(result2$conservative, p_model1_l)
+auc(roc_modle2)
+plot(roc_modle2, auc.polygon=TRUE, print.auc = TRUE,asp = NA)
+roc_modle3 <- roc(result2$conservative, p_model3_l)
+auc(roc_modle3)
+plot(roc_modle3, auc.polygon=TRUE, print.auc = TRUE,asp = NA)
+
+roc_modle4 <- roc(result3$liberal, p_model2_l)
+auc(roc_modle4)
+plot(roc_modle4, auc.polygon=TRUE, print.auc = TRUE,asp = NA)
+roc_modle5 <- roc(result3$liberal, p_model4_l)
+auc(roc_modle5)
+plot(roc_modle5, auc.polygon=TRUE, print.auc = TRUE,asp = NA)
+
+```
+```{r}
+####Model gerder age####
+model1_l <- glmer(conservative~(1|cell)+changed_edu+cps19_province ,
+                     data = dataset_survey1, 
+                     family=binomial)
+
+summary(model1_l)
+ranef(model1_l)
+
+
+model2_l <- glmer(liberal~(1|cell)+changed_edu+cps19_province ,
+                     data = dataset_survey1, 
+                     family=binomial)
+summary(model2_l)
+ranef(model2_l)
+
+
+```
+
+
+
+```{r}
+#using the census data to test#
+names(dataset_census1)[names(dataset_census1) == "province"] <- "cps19_province"
+names(dataset_census1)[names(dataset_census1) == "changed_edu_census"] <- "changed_edu"
+
+
+  
+vote_pconservative<-predict(model1_l,dataset_census1[,c("sex","cps19_province", "changed_edu", "group_age", "cell")],type="response")
+vote_pliberal<-predict(model2_l,dataset_census1[,c("sex","cps19_province", "changed_edu", "group_age", "cell")],type="response")
+
+predictions<-ifelse(vote_pconservative >= vote_pliberal,"Conservative Party","Liberal Party")
+#post-stratification base on states#
+census_fianlresult <- dataset_census1 %>% mutate(predictions= predictions)
+
+census_fianlresult <- mutate(census_fianlresult, Conservative=ifelse(census_fianlresult$predictions=="Conservative Party",1,0))
+census_fianlresult <- mutate(census_fianlresult, Liberal=ifelse(census_fianlresult$predictions=="Liberal Party",1,0))
+
+groupby_states <- census_fianlresult %>% group_by(cps19_province) %>% summarise(Conservative=sum(Conservative),Liberal=sum(Liberal))
+
+groupby_states$Liberal_prob = groupby_states$Liberal/ (groupby_states$Conservative+ groupby_states$Liberal)
+groupby_states$Conservation_prob = groupby_states$Conservative/ (groupby_states$Conservative+ groupby_states$Liberal)
+
+
+
+groupby_states$province_votes = case_when(groupby_states$cps19_province == "Alberta" ~ 34 ,groupby_states$cps19_province == "British Columbia" ~ 42,groupby_states$cps19_province == "Manitoba" ~ 14 ,groupby_states$cps19_province == "New Brunswick" ~ 10 ,groupby_states$cps19_province == "Newfoundland and Labrador" ~ 7 ,groupby_states$cps19_province == "Nova Scotia" ~ 11 ,groupby_states$cps19_province == "Ontario" ~ 121,groupby_states$cps19_province == "Prince Edward Island" ~ 4,groupby_states$cps19_province == "Quebec" ~ 78,groupby_states$cps19_province == "Saskatchewan" ~14 )
+
+groupby_states$fianl_Liberal = groupby_states$province_votes * groupby_states$Liberal_prob
+groupby_states$fianl_conservative = groupby_states$province_votes * groupby_states$Conservation_prob
+
+
+election_result_Liberal <- (sum(groupby_states$fianl_Liberal)/335)
+election_result_Conservative <- (1- (sum(groupby_states$fianl_Liberal)/335) )
+election_result_posted <-c(election_result_Liberal, election_result_Conservative)
+election_result_posted
+ 
+
+```
+
+
+```{r}
+# posting base on gender and age group
+reduced_data <- dataset_census1 %>% 
+  count(cell, cps19_province, changed_edu) %>% 
+  group_by(cell)
+reduced_data$estimate <- predict(model1_l, reduced_data, type='response')
+reduced_data <- reduced_data %>% mutate(cell_pro = n/ length(dataset_census1$cell))
+head(reduced_data)
+reduced_data <- reduced_data %>% mutate(alp_predict = estimate*cell_pro)
+sum(reduced_data$alp_predict) #prob for conservative party
+reduced_data$estimate1 <- predict(model2_l, reduced_data, type='response')
+reduced_data <- reduced_data %>% mutate(cell_pro = n/ length(dataset_census1$cell))
+head(reduced_data)
+reduced_data <- reduced_data %>% mutate(alp_predict1 = estimate1*cell_pro)
+sum(reduced_data$alp_predict1)# prob for Liberal party
+```
